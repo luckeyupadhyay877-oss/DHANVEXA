@@ -2,18 +2,35 @@ generator client {
   provider = "prisma-client-js"
 }
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
+
 enum Role {
   CUSTOMER
   ADMIN
   OWNER
   PARTNER
+ }
+enum PartnerStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED 
 }
-enum PartnerStatus { PENDING APPROVED REJECTED SUSPENDED }
-enum CommissionStatus { PENDING CONFIRMED REJECTED PAID }
-enum PayoutStatus { REQUESTED APPROVED REJECTED PAID }
+enum CommissionStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  PAID
+}
+enum PayoutStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PAID
+}
 enum ApplicationStatus {
   RECEIVED
   UNDER_REVIEW
