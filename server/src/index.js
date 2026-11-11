@@ -74,13 +74,76 @@ app.post('/api/applications',auth,allow('CUSTOMER'),async(req,res)=>{
   if(!parsed.success) return res.status(400).json({error:'Choose a product.'});
   const product=await prisma.product.findFirst({where:{id:parsed.data.productId,active:true}});
   if(!product) return res.status(404).json({error:'Product is not available.'});
-  const application=await prisma.application.create({data:{reference:'DH-'+crypto.randomBytes(4).toString('hex').toUpperCase(),userId:req.user.sub,productId:product.id}});
+  const referralCode=typeof req.body.referralCode==='string'?req.body.referralCode.trim().toUpperCase():'';
+  const referrer=referralCode?await prisma.user.findFirst({where:{role:'PARTNER',partnerProfile:{referralCode,status:'APPROVED'}}}):null;
+  if(referrer)await prisma.user.updateMany({where:{id:req.user.sub,referredByPartnerId:null},data:{referredByPartnerId:referrer.id}});
+  const customer=await prisma.user.findUnique({where:{id:req.user.sub},select:{referredByPartnerId:true}});
+  const application=await prisma.application.create({data:{reference:'DH-'+crypto.randomBytes(4).toString('hex').toUpperCase(),userId:req.user.sub,productId:product.id,partnerId:customer?.referredByPartnerId||referrer?.id||null}});
   res.status(201).json(application);
 });
 app.get('/api/my/applications',auth,allow('CUSTOMER'),async(req,res)=>{
   const rows=await prisma.application.findMany({where:{userId:req.user.sub},include:{product:{select:{name:true,category:true}}},orderBy:{createdAt:'desc'}});
   res.json(rows);
 });
+
+// Partner onboarding: partners are pending until an administrator approves them.
+app.post('/api/partners/register',async(req,res)=>{
+  const parsed=z.object({name:z.string().trim().min(2).max(80),email:z.string().email().max(150),phone:z.string().trim().min(8).max(20),password:z.string().min(10).max(100)}).safeParse(req.body);
+  if(!parsed.success)return res.status(400).json({error:'Enter name, valid email, mobile and a password of at least 10 characters.'});
+  const {name,email,phone,password}=parsed.data;
+  try{
+    const passwordHash=await bcrypt.hash(password,12);const referralCode='DH'+crypto.randomBytes(4).toString('hex').toUpperCase();
+    const user=await prisma.user.create({data:{name,email:email.toLowerCase(),phone,passwordHash,role:'PARTNER',partnerProfile:{create:{referralCode}}},include:{partnerProfile:true}});
+    res.status(201).json({message:'Partner application submitted. Admin approval is required before referrals can be tracked.',user:safeUser(user),status:user.partnerProfile.status,referralCode:null});
+  }catch{res.status(409).json({error:'This email may already be registered.'});}
+});
+app.get('/api/partner/dashboard',auth,allow('PARTNER'),async(req,res)=>{
+ const profile=await prisma.partnerProfile.findUnique({where:{userId:req.user.sub}});if(!profile)return res.status(404).json({error:'Partner profile not found.'});
+ const [referrals,applications,commissions,payouts]=await Promise.all([
+  prisma.user.count({where:{referredByPartnerId:req.user.sub}}),prisma.application.findMany({where:{partnerId:req.user.sub},include:{user:{select:{name:true}},product:{select:{name:true}}},orderBy:{createdAt:'desc'},take:100}),
+  prisma.commission.findMany({where:{partnerId:req.user.sub},orderBy:{createdAt:'desc'}}),prisma.payout.findMany({where:{partnerId:req.user.sub},orderBy:{requestedAt:'desc'}})
+ ]);
+ const sum=st=>commissions.filter(c=>c.status===st).reduce((a,c)=>a+c.commissionAmount,0);
+ res.json({profile:{referralCode:profile.referralCode,status:profile.status,payoutName:profile.payoutName,payoutUpi:profile.payoutUpi},referralLink:`${process.env.PUBLIC_CLIENT_URL||process.env.CLIENT_ORIGIN||'http://localhost:5173'}?ref=${profile.referralCode}`,referrals,applications,commissions,payouts,totals:{pending:sum('PENDING'),confirmed:sum('CONFIRMED'),paid:sum('PAID')}});
+});
+app.patch('/api/partner/payout-details',auth,allow('PARTNER'),async(req,res)=>{
+ const parsed=z.object({payoutName:z.string().trim().min(2).max(80),payoutUpi:z.string().trim().max(100).optional(),payoutBankName:z.string().trim().max(80).optional(),payoutAccountLast4:z.string().regex(/^\d{4}$/).optional(),payoutIfsc:z.string().trim().max(11).optional()}).refine(x=>x.payoutUpi|| (x.payoutBankName&&x.payoutAccountLast4&&x.payoutIfsc),{message:'Add UPI or bank payout details.'}).safeParse(req.body);
+ if(!parsed.success)return res.status(400).json({error:'Add a valid UPI ID or bank details (only last 4 account digits).'});
+ const row=await prisma.partnerProfile.update({where:{userId:req.user.sub},data:parsed.data});res.json({ok:true,payoutName:row.payoutName});
+});
+app.post('/api/partner/payouts',auth,allow('PARTNER'),async(req,res)=>{
+ const parsed=z.object({amount:z.number().positive().max(1000000)}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:'Enter a valid payout amount.'});
+ const [profile,confirmed,requested]=await Promise.all([prisma.partnerProfile.findUnique({where:{userId:req.user.sub}}),prisma.commission.aggregate({where:{partnerId:req.user.sub,status:'CONFIRMED'},_sum:{commissionAmount:true}}),prisma.payout.aggregate({where:{partnerId:req.user.sub,status:{in:['REQUESTED','APPROVED']}},_sum:{amount:true}})]);
+ if(profile?.status!=='APPROVED')return res.status(403).json({error:'Partner approval is required.'});
+ const available=(confirmed._sum.commissionAmount||0)-(requested._sum.amount||0);if(parsed.data.amount>available)return res.status(400).json({error:'Requested amount exceeds confirmed unpaid commission.'});
+ const payout=await prisma.payout.create({data:{partnerId:req.user.sub,amount:parsed.data.amount}});res.status(201).json(payout);
+});
+app.get('/api/admin/partners',auth,allow('ADMIN','OWNER'),async(_req,res)=>res.json(await prisma.partnerProfile.findMany({include:{user:{select:{id:true,name:true,email:true,phone:true,createdAt:true}}},orderBy:{createdAt:'desc'}})));
+app.patch('/api/admin/partners/:id',auth,allow('ADMIN','OWNER'),async(req,res)=>{
+ const parsed=z.object({status:z.enum(['APPROVED','REJECTED','SUSPENDED']),rejectionReason:z.string().max(300).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:'Invalid partner status.'});
+ const row=await prisma.partnerProfile.update({where:{id:req.params.id},data:{status:parsed.data.status,rejectionReason:parsed.data.rejectionReason||null,approvedAt:parsed.data.status==='APPROVED'?new Date():null}});res.json(row);
+});
+app.post('/api/admin/commissions',auth,allow('ADMIN','OWNER'),async(req,res)=>{
+ const parsed=z.object({applicationId:z.string().min(1),commissionAmount:z.number().positive().max(1000000),grossAmount:z.number().min(0).optional(),providerName:z.string().max(100).optional(),providerReference:z.string().max(100).optional(),note:z.string().max(500).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:'Provide application, provider-confirmed commission amount and details.'});
+ const a=await prisma.application.findUnique({where:{id:parsed.data.applicationId}});if(!a?.partnerId)return res.status(400).json({error:'This application has no approved partner referral.'});
+ const profile=await prisma.partnerProfile.findUnique({where:{userId:a.partnerId}});if(profile?.status!=='APPROVED')return res.status(400).json({error:'Referring partner is not approved.'});
+ try{const c=await prisma.commission.create({data:{...parsed.data,partnerId:a.partnerId}});res.status(201).json(c);}catch{res.status(409).json({error:'A commission record already exists for this application.'});}
+});
+app.patch('/api/admin/commissions/:id',auth,allow('ADMIN','OWNER'),async(req,res)=>{
+ const parsed=z.object({status:z.enum(['CONFIRMED','REJECTED','PAID']),note:z.string().max(500).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:'Invalid commission status.'});
+ const c=await prisma.commission.update({where:{id:req.params.id},data:{status:parsed.data.status,note:parsed.data.note,confirmedAt:parsed.data.status==='CONFIRMED'?new Date():undefined,paidAt:parsed.data.status==='PAID'?new Date():undefined}});res.json(c);
+});
+app.get('/api/admin/payouts',auth,allow('ADMIN','OWNER'),async(_req,res)=>{const rows=await prisma.payout.findMany({include:{partner:{select:{name:true,email:true,partnerProfile:{select:{payoutUpi:true,payoutBankName:true,payoutAccountLast4:true,payoutIfsc:true,payoutName:true}}}}},orderBy:{requestedAt:'desc'},take:300});res.json(rows);});
+app.patch('/api/admin/payouts/:id',auth,allow('ADMIN','OWNER'),async(req,res)=>{
+ const parsed=z.object({status:z.enum(['APPROVED','REJECTED','PAID']),paymentReference:z.string().max(120).optional(),note:z.string().max(500).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:'Invalid payout update.'});
+ const row=await prisma.payout.update({where:{id:req.params.id},data:{status:parsed.data.status,paymentReference:parsed.data.paymentReference,note:parsed.data.note,processedAt:['REJECTED','PAID'].includes(parsed.data.status)?new Date():undefined}});
+ res.json(row);
+});
+app.get('/api/owner/partner-summary',auth,allow('OWNER'),async(_req,res)=>{
+ const [partners,referrals,commissions,payouts]=await Promise.all([prisma.partnerProfile.count(),prisma.application.count({where:{partnerId:{not:null}}}),prisma.commission.aggregate({_sum:{commissionAmount:true}}),prisma.payout.aggregate({where:{status:{in:['REQUESTED','APPROVED']}},_sum:{amount:true}})]);
+ res.json({partners,referrals,totalCommission:commissions._sum.commissionAmount||0,pendingPayouts:payouts._sum.amount||0});
+});
+
 app.get('/api/admin/summary',auth,allow('ADMIN','OWNER'),async(_req,res)=>{
   const [users,applications,pending,productsCount]=await Promise.all([
     prisma.user.count({where:{role:'CUSTOMER'}}),prisma.application.count(),

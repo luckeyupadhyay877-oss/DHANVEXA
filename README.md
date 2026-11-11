@@ -83,3 +83,36 @@ Build and sign the APK/AAB in Android Studio. For a real phone connected to a re
 8. Penetration test and independent security review before real customer data.
 
 This starter is deliberately labelled as a prototype. It must not be represented as a bank, lender, broker, insurer, investment adviser, or regulated distributor.
+
+## Partner referral & commission module (development implementation)
+
+This ZIP includes partner onboarding, approval, referral attribution, commission records and payout requests. It is a development implementation; it is not a live financial-services partner network and it does not create a provider agreement.
+
+### Partner journey
+1. Open **Become a partner** on the website and submit name, mobile, email and a password (minimum 10 characters).
+2. The account is created with role `PARTNER` and status `PENDING`.
+3. An admin/owner signs in and opens **Partners** in the staff workspace to approve, reject or suspend the application.
+4. Approved partners sign in through the normal Sign in screen and open **Partner dashboard**. The referral link is shown there.
+5. A customer visiting with `?ref=DHCODE` and submitting an enquiry is attributed to that approved partner. The first approved referral is retained on the customer account.
+6. Admin creates a commission record against a referred application only after provider confirmation. It starts as `PENDING`; admin can confirm, reject or mark it paid.
+7. Partner can request a payout from confirmed unpaid commission. Admin/owner reviews it under **Payouts** and records the payment reference when marking it paid.
+
+### Partner API routes
+- `POST /api/partners/register`
+- `GET /api/partner/dashboard` (PARTNER)
+- `PATCH /api/partner/payout-details` (PARTNER; UPI or bank name + last four account digits + IFSC)
+- `POST /api/partner/payouts` (PARTNER)
+- `GET /api/admin/partners`, `PATCH /api/admin/partners/:id` (ADMIN/OWNER)
+- `POST /api/admin/commissions`, `PATCH /api/admin/commissions/:id` (ADMIN/OWNER)
+- `GET /api/admin/payouts`, `PATCH /api/admin/payouts/:id` (ADMIN/OWNER)
+- `GET /api/owner/partner-summary` (OWNER)
+
+### Environment
+Set `PUBLIC_CLIENT_URL` to the deployed website's public origin so partner links point to the correct website. Keep `JWT_SECRET` at least 32 random characters and set `CLIENT_ORIGIN` to an explicit production origin. Run `npx prisma generate` and `npx prisma db push` (or create reviewed migrations) after updating the schema.
+
+### Important controls before launch
+- Provider agreement and written commission schedule are required before advertising rates or paying commissions.
+- The provider must confirm eligible transactions/settlements; do not create commission entries from an enquiry alone.
+- Admin must independently reconcile payout amount to confirmed commission ledger and bank/UPI settlement. This starter does not connect to a bank, broker, insurer, payment gateway or provider webhook.
+- Configure production database/backups, migrations, audit logs, MFA, OTP, password recovery, monitoring, privacy notice, terms, consent and applicable legal/regulatory review.
+- Never collect customer Aadhaar numbers, OTPs, bank passwords, card PINs or full bank credentials on this platform. Payout profile stores UPI or bank name, IFSC and only the last four account digits in this prototype.

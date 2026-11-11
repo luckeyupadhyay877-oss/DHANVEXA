@@ -9,7 +9,11 @@ enum Role {
   CUSTOMER
   ADMIN
   OWNER
+  PARTNER
 }
+enum PartnerStatus { PENDING APPROVED REJECTED SUSPENDED }
+enum CommissionStatus { PENDING CONFIRMED REJECTED PAID }
+enum PayoutStatus { REQUESTED APPROVED REJECTED PAID }
 enum ApplicationStatus {
   RECEIVED
   UNDER_REVIEW
@@ -27,6 +31,13 @@ model User {
   role         Role          @default(CUSTOMER)
   createdAt    DateTime      @default(now())
   applications Application[]
+  partnerProfile PartnerProfile?
+  referredByPartnerId String?
+  referredByPartner User? @relation("PartnerReferrals", fields:[referredByPartnerId], references:[id])
+  referredUsers User[] @relation("PartnerReferrals")
+  partnerApplications Application[] @relation("PartnerApplications")
+  commissions Commission[]
+  payouts Payout[]
 }
 model Product {
   id          String        @id @default(cuid())
@@ -36,6 +47,13 @@ model Product {
   description String
   active      Boolean       @default(true)
   applications Application[]
+  partnerProfile PartnerProfile?
+  referredByPartnerId String?
+  referredByPartner User? @relation("PartnerReferrals", fields:[referredByPartnerId], references:[id])
+  referredUsers User[] @relation("PartnerReferrals")
+  partnerApplications Application[] @relation("PartnerApplications")
+  commissions Commission[]
+  payouts Payout[]
 }
 model Application {
   id          String            @id @default(cuid())
@@ -48,4 +66,52 @@ model Application {
   updatedAt   DateTime          @updatedAt
   user        User              @relation(fields: [userId], references: [id])
   product     Product           @relation(fields: [productId], references: [id])
+  partnerId   String?
+  partner     User?             @relation("PartnerApplications", fields:[partnerId], references:[id])
+  commission Commission?
+}
+
+model PartnerProfile {
+  id String @id @default(cuid())
+  userId String @unique
+  referralCode String @unique
+  status PartnerStatus @default(PENDING)
+  payoutName String?
+  payoutUpi String?
+  payoutBankName String?
+  payoutAccountLast4 String?
+  payoutIfsc String?
+  approvedAt DateTime?
+  rejectionReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields:[userId], references:[id])
+}
+model Commission {
+  id String @id @default(cuid())
+  partnerId String
+  applicationId String @unique
+  providerName String?
+  providerReference String?
+  grossAmount Float @default(0)
+  commissionAmount Float
+  currency String @default("INR")
+  status CommissionStatus @default(PENDING)
+  note String?
+  confirmedAt DateTime?
+  paidAt DateTime?
+  createdAt DateTime @default(now())
+  partner User @relation(fields:[partnerId], references:[id])
+  application Application @relation(fields:[applicationId], references:[id])
+}
+model Payout {
+  id String @id @default(cuid())
+  partnerId String
+  amount Float
+  status PayoutStatus @default(REQUESTED)
+  paymentReference String?
+  note String?
+  requestedAt DateTime @default(now())
+  processedAt DateTime?
+  partner User @relation(fields:[partnerId], references:[id])
 }
