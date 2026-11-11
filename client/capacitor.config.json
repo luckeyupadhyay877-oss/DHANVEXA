@@ -1,0 +1,8 @@
+{
+  "appId": "in.dhanvexa.app",
+  "appName": "Dhanvexa",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
