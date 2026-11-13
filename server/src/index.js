@@ -133,6 +133,13 @@ app.patch('/api/admin/commissions/:id',auth,allow('ADMIN','OWNER'),async(req,res
  const parsed=z.object({status:z.enum(['CONFIRMED','REJECTED','PAID']),note:z.string().max(500).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:'Invalid commission status.'});
  const c=await prisma.commission.update({where:{id:req.params.id},data:{status:parsed.data.status,note:parsed.data.note,confirmedAt:parsed.data.status==='CONFIRMED'?new Date():undefined,paidAt:parsed.data.status==='PAID'?new Date():undefined}});res.json(c);
 });
+app.get('/api/admin/commissions',auth,allow('ADMIN','OWNER'),async(_req,res)=>{
+ const rows=await prisma.commission.findMany({
+  include:{partner:{select:{name:true,email:true}},application:{select:{reference:true}}},
+  orderBy:{createdAt:'desc'},take:300
+ });
+ res.json(rows);
+});
 app.get('/api/admin/payouts',auth,allow('ADMIN','OWNER'),async(_req,res)=>{const rows=await prisma.payout.findMany({include:{partner:{select:{name:true,email:true,partnerProfile:{select:{payoutUpi:true,payoutBankName:true,payoutAccountLast4:true,payoutIfsc:true,payoutName:true}}}}},orderBy:{requestedAt:'desc'},take:300});res.json(rows);});
 app.patch('/api/admin/payouts/:id',auth,allow('ADMIN','OWNER'),async(req,res)=>{
  const parsed=z.object({status:z.enum(['APPROVED','REJECTED','PAID']),paymentReference:z.string().max(120).optional(),note:z.string().max(500).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:'Invalid payout update.'});
