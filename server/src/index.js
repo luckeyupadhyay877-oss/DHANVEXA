@@ -257,13 +257,42 @@ app.post('/api/partners/register',async(req,res)=>{
   }catch{res.status(409).json({error:'This email may already be registered.'});}
 });
 app.get('/api/partner/dashboard',auth,allow('PARTNER'),async(req,res)=>{
- const profile=await prisma.partnerProfile.findUnique({where:{userId:req.user.sub}});if(!profile)return res.status(404).json({error:'Partner profile not found.'});
- const [referrals,applications,commissions,payouts]=await Promise.all([
-  prisma.user.count({where:{referredByPartnerId:req.user.sub}}),prisma.application.findMany({where:{partnerId:req.user.sub},include:{user:{select:{name:true}},product:{select:{name:true}}},orderBy:{createdAt:'desc'},take:100}),
-  prisma.commission.findMany({where:{partnerId:req.user.sub},orderBy:{createdAt:'desc'}}),prisma.payout.findMany({where:{partnerId:req.user.sub},orderBy:{requestedAt:'desc'}})
+ const profile=await prisma.partnerProfile.findUnique({where:{userId:req.user.sub}});
+ if(!profile)return res.status(404).json({error:'Partner profile not found.'});
+
+ // Calculate today's date boundaries using Indian Standard Time (UTC+5:30).
+ const istNow=new Date(Date.now()+330*60*1000);
+ istNow.setUTCHours(0,0,0,0);
+ const todayStart=new Date(istNow.getTime()-330*60*1000);
+ const tomorrowStart=new Date(todayStart.getTime()+86400000);
+
+ const [referrals,applications,commissions,payouts,pendingApplications,approvedApplications,totalEarned,todayEarned]=await Promise.all([
+  prisma.user.count({where:{referredByPartnerId:req.user.sub}}),
+  prisma.application.findMany({where:{partnerId:req.user.sub},include:{user:{select:{name:true}},product:{select:{name:true}}},orderBy:{createdAt:'desc'},take:100}),
+  prisma.commission.findMany({where:{partnerId:req.user.sub},orderBy:{createdAt:'desc'}}),
+  prisma.payout.findMany({where:{partnerId:req.user.sub},orderBy:{requestedAt:'desc'}}),
+  prisma.application.count({where:{partnerId:req.user.sub,status:{in:['RECEIVED','UNDER_REVIEW','PARTNER_PENDING','NEED_INFO']}}}),
+  prisma.application.count({where:{partnerId:req.user.sub,status:'APPROVED'}}),
+  prisma.commission.aggregate({where:{partnerId:req.user.sub,status:{in:['CONFIRMED','PAID']}},_sum:{commissionAmount:true}}),
+  prisma.commission.aggregate({where:{partnerId:req.user.sub,status:{in:['CONFIRMED','PAID']},confirmedAt:{gte:todayStart,lt:tomorrowStart}},_sum:{commissionAmount:true}})
  ]);
+
  const sum=st=>commissions.filter(c=>c.status===st).reduce((a,c)=>a+c.commissionAmount,0);
- res.json({profile:{referralCode:profile.referralCode,status:profile.status,payoutName:profile.payoutName,payoutUpi:profile.payoutUpi},referralLink:`${process.env.PUBLIC_CLIENT_URL||process.env.CLIENT_ORIGIN||'http://localhost:5173'}?ref=${profile.referralCode}`,referrals,applications,commissions,payouts,totals:{pending:sum('PENDING'),confirmed:sum('CONFIRMED'),paid:sum('PAID')}});
+
+ res.json({
+  profile:{referralCode:profile.referralCode,status:profile.status,payoutName:profile.payoutName,payoutUpi:profile.payoutUpi},
+  referralLink:`${process.env.PUBLIC_CLIENT_URL||process.env.CLIENT_ORIGIN||'http://localhost:5173'}?ref=${profile.referralCode}`,
+  referrals,applications,commissions,payouts,
+  totals:{
+   pending:sum('PENDING'),
+   confirmed:sum('CONFIRMED'),
+   paid:sum('PAID'),
+   totalEarnings:totalEarned._sum.commissionAmount||0,
+   todayEarnings:todayEarned._sum.commissionAmount||0,
+   pendingApplications,
+   approvedApplications
+  }
+ });
 });
 app.patch('/api/partner/payout-details',auth,allow('PARTNER'),async(req,res)=>{
  const parsed=z.object({payoutName:z.string().trim().min(2).max(80),payoutUpi:z.string().trim().max(100).optional(),payoutBankName:z.string().trim().max(80).optional(),payoutAccountLast4:z.string().regex(/^\d{4}$/).optional(),payoutIfsc:z.string().trim().max(11).optional()}).refine(x=>x.payoutUpi|| (x.payoutBankName&&x.payoutAccountLast4&&x.payoutIfsc),{message:'Add UPI or bank payout details.'}).safeParse(req.body);
