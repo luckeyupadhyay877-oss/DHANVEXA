@@ -22,3 +22,27 @@ body{color:#261d49}
 .authCard,.panel,.summaryCard{border-radius:17px;box-shadow:0 12px 35px #39216f10}
 .authCard input{border-radius:10px}
 @media(max-width:600px){.hero{background:linear-gradient(145deg,#fbf8ff,#f1ebff,#fff5f0)}.productCard{padding:22px}}
+
+/* DHANVEXA Animated Bank Marketplace */
+.bankSection{background:linear-gradient(145deg,#fbf8ff,#fff7f3)}
+.bankSearch{display:flex;align-items:center;gap:12px;max-width:460px;padding:14px 17px;margin:25px 0 30px;background:#fff;border:1px solid #eee5fa;border-radius:14px;color:#7048dc;box-shadow:0 8px 25px #39216f0c}
+.bankSearch input{width:100%;border:0;outline:0;font:13px 'DM Sans';color:#26184e;background:transparent}
+.bankGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:19px}
+.bankCard{position:relative;overflow:hidden;display:flex;flex-direction:column;min-height:255px;padding:23px;background:linear-gradient(145deg,#fff,#fcf9ff);border:1px solid #eee7f7;border-radius:20px;box-shadow:0 9px 28px #39216f0c;animation:bankEnter .55s both;animation-delay:var(--bank-delay,0ms);transition:transform .3s,box-shadow .3s,border-color .3s}
+.bankCard:before{content:"";position:absolute;width:130px;height:130px;right:-55px;top:-60px;border-radius:50%;background:linear-gradient(135deg,#eee5ff,#ffe4dc);opacity:.8;transition:transform .4s}
+.bankCard:hover{transform:translateY(-8px);box-shadow:0 20px 42px #6842d82a;border-color:#d9c9ff}
+.bankCard:hover:before{transform:scale(1.7)}
+.bankBrand{position:relative;z-index:1;width:65px;height:52px;display:grid;place-items:center;border-radius:14px;background:linear-gradient(135deg,#7148df,#f07862);color:white;font:800 15px Manrope;letter-spacing:.5px;box-shadow:0 8px 20px #6842d833;animation:bankFloat 4s ease-in-out infinite}
+.bankInfo{position:relative;z-index:1;margin-top:20px}
+.bankInfo>span{font-size:9px;color:#8b78bd;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+.bankInfo h3{font:800 16px Manrope;color:#26184e;margin:7px 0}
+.bankInfo p{font-size:10px;line-height:1.7;color:#77728f;margin:0 0 17px}
+.bankApply{position:relative;z-index:1;margin-top:auto;display:flex;align-items:center;justify-content:space-between;padding-top:13px;border-top:1px solid #eee8f7;color:#6842d8;text-decoration:none;font-size:11px;font-weight:800}
+.bankApply svg{transition:transform .2s}
+.bankApply:hover svg{transform:translateX(5px)}
+.bankDisclaimer{display:block;margin-top:25px;color:#89839c;font-size:10px;line-height:1.8}
+@keyframes bankEnter{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes bankFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@media(max-width:850px){.bankGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.bankGrid{grid-template-columns:1fr}.bankCard{min-height:230px}.bankSection{padding-left:6%;padding-right:6%}}
+@media(prefers-reduced-motion:reduce){.bankCard,.bankBrand{animation:none!important;transition:none!important}}
