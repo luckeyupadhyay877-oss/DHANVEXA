@@ -23,6 +23,7 @@ const isAllowedClientOrigin = origin =>
   !origin ||
   allowedClientOrigins.includes(origin) ||
   origin === 'https://dhanvexa-en89.vercel.app' ||
+              origin === 'https://dhanvexa-booh.vercel.app' ||
   /^https:\/\/dhanvexa-en89-[a-z0-9-]+-luckey3\.vercel\.app$/.test(origin);
 
 app.use(cors({ origin: (origin, callback) => {
