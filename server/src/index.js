@@ -64,6 +64,165 @@ app.post('/api/auth/login', async (req,res)=>{
   if(!user || !(await bcrypt.compare(parsed.data.password,user.passwordHash))) return res.status(401).json({error:'Email or password is incorrect.'});
   res.json({token:sign(user),user:safeUser(user)});
 });
+
+const otpHash = (email, purpose, code) =>
+  crypto.createHmac('sha256', JWT_SECRET)
+    .update(`${email}:${purpose}:${code}`)
+    .digest('hex');
+
+app.post('/api/auth/otp/request', async (req,res) => {
+  const parsed = z.object({
+    email:z.string().email().max(150),
+    purpose:z.enum(['LOGIN','RESET'])
+  }).safeParse(req.body);
+
+  if (!parsed.success)
+    return res.status(400).json({error:'Enter a valid email and OTP purpose.'});
+
+  const email = parsed.data.email.toLowerCase();
+  const purpose = parsed.data.purpose;
+  const user = await prisma.user.findUnique({where:{email}});
+
+  if (!user)
+    return res.json({ok:true,message:'If the account exists, an OTP will be sent.'});
+
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM)
+    return res.status(503).json({error:'Email service is not configured yet.'});
+
+  const existing = await prisma.otpChallenge.findUnique({
+    where:{email_purpose:{email,purpose}}
+  });
+
+  if (existing && Date.now() - existing.createdAt.getTime() < 60000)
+    return res.status(429).json({error:'Please wait 60 seconds before requesting another OTP.'});
+
+  const code = String(crypto.randomInt(100000,1000000));
+  const codeHash = otpHash(email,purpose,code);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  await prisma.otpChallenge.upsert({
+    where:{email_purpose:{email,purpose}},
+    create:{email,purpose,codeHash,expiresAt,attempts:0},
+    update:{codeHash,expiresAt,attempts:0,createdAt:new Date()}
+  });
+
+  const subject = purpose === 'LOGIN'
+    ? 'Your DHANVEXA login OTP'
+    : 'Your DHANVEXA password reset OTP';
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method:'POST',
+      headers:{
+        Authorization:`Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        from:process.env.EMAIL_FROM,
+        to:[email],
+        subject,
+        html:`<p>Your DHANVEXA verification code is:</p><h2>${code}</h2><p>This code expires in 10 minutes. Do not share it with anyone.</p>`
+      })
+    });
+
+    if (!response.ok) {
+      await prisma.otpChallenge.deleteMany({where:{email,purpose}});
+      console.error('Email provider error:',await response.text());
+      return res.status(502).json({error:'Could not send OTP. Please try again later.'});
+    }
+  } catch (error) {
+    await prisma.otpChallenge.deleteMany({where:{email,purpose}});
+    console.error('Email delivery error:',error);
+    return res.status(502).json({error:'Could not send OTP. Please try again later.'});
+  }
+
+  res.json({ok:true,message:'OTP sent to your email. It expires in 10 minutes.'});
+});
+
+app.post('/api/auth/otp/verify-login', async (req,res) => {
+  const parsed = z.object({
+    email:z.string().email().max(150),
+    code:z.string().regex(/^\d{6}$/)
+  }).safeParse(req.body);
+
+  if (!parsed.success)
+    return res.status(400).json({error:'Enter a valid email and 6-digit OTP.'});
+
+  const email = parsed.data.email.toLowerCase();
+  const challenge = await prisma.otpChallenge.findUnique({
+    where:{email_purpose:{email,purpose:'LOGIN'}}
+  });
+
+  if (!challenge || challenge.expiresAt < new Date())
+    return res.status(400).json({error:'OTP is invalid or expired. Request a new one.'});
+
+  if (challenge.attempts >= 5) {
+    await prisma.otpChallenge.deleteMany({where:{email,purpose:'LOGIN'}});
+    return res.status(429).json({error:'Too many incorrect attempts. Request a new OTP.'});
+  }
+
+  const expected = Buffer.from(challenge.codeHash,'hex');
+  const supplied = Buffer.from(otpHash(email,'LOGIN',parsed.data.code),'hex');
+
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected,supplied)) {
+    await prisma.otpChallenge.update({
+      where:{id:challenge.id},
+      data:{attempts:{increment:1}}
+    });
+    return res.status(400).json({error:'OTP is incorrect.'});
+  }
+
+  const user = await prisma.user.findUnique({where:{email}});
+  await prisma.otpChallenge.deleteMany({where:{email,purpose:'LOGIN'}});
+  if (!user) return res.status(400).json({error:'Account not found.'});
+
+  res.json({token:sign(user),user:safeUser(user)});
+});
+
+app.post('/api/auth/password/reset', async (req,res) => {
+  const parsed = z.object({
+    email:z.string().email().max(150),
+    code:z.string().regex(/^\d{6}$/),
+    password:z.string().min(10).max(100)
+  }).safeParse(req.body);
+
+  if (!parsed.success)
+    return res.status(400).json({error:'Enter a valid email, 6-digit OTP and password of at least 10 characters.'});
+
+  const email = parsed.data.email.toLowerCase();
+  const challenge = await prisma.otpChallenge.findUnique({
+    where:{email_purpose:{email,purpose:'RESET'}}
+  });
+
+  if (!challenge || challenge.expiresAt < new Date())
+    return res.status(400).json({error:'OTP is invalid or expired. Request a new one.'});
+
+  if (challenge.attempts >= 5) {
+    await prisma.otpChallenge.deleteMany({where:{email,purpose:'RESET'}});
+    return res.status(429).json({error:'Too many incorrect attempts. Request a new OTP.'});
+  }
+
+  const expected = Buffer.from(challenge.codeHash,'hex');
+  const supplied = Buffer.from(otpHash(email,'RESET',parsed.data.code),'hex');
+
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected,supplied)) {
+    await prisma.otpChallenge.update({
+      where:{id:challenge.id},
+      data:{attempts:{increment:1}}
+    });
+    return res.status(400).json({error:'OTP is incorrect.'});
+  }
+
+  const passwordHash = await bcrypt.hash(parsed.data.password,12);
+
+  await prisma.$transaction([
+    prisma.user.update({where:{email},data:{passwordHash}}),
+    prisma.otpChallenge.deleteMany({where:{email,purpose:'RESET'}})
+  ]);
+
+  res.json({ok:true,message:'Password changed successfully. You can now sign in.'});
+});
+
 app.get('/api/me',auth,async(req,res)=>{
   const user=await prisma.user.findUnique({where:{id:req.user.sub}});
   if(!user) return res.status(401).json({error:'Account not found.'});

@@ -125,3 +125,16 @@ model Payout {
   processedAt DateTime?
   partner User @relation(fields:[partnerId], references:[id])
 }
+
+model OtpChallenge {
+  id        String   @id @default(cuid())
+  email     String
+  purpose   String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([email, purpose])
+  @@index([expiresAt])
+}
