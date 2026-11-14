@@ -18,7 +18,17 @@ if (JWT_SECRET.length < 32) {
   process.exit(1);
 }
 app.use(helmet());
-app.use(cors({ origin: (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',') }));
+const allowedClientOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',').map(origin => origin.trim()).filter(Boolean);
+const isAllowedClientOrigin = origin =>
+  !origin ||
+  allowedClientOrigins.includes(origin) ||
+  origin === 'https://dhanvexa-en89.vercel.app' ||
+  /^https:\/\/dhanvexa-en89-[a-z0-9-]+-luckey3\.vercel\.app$/.test(origin);
+
+app.use(cors({ origin: (origin, callback) => {
+  if (isAllowedClientOrigin(origin)) return callback(null, true);
+  return callback(new Error('Origin is not allowed by CORS'));
+} }));
 app.use(express.json({ limit: '20kb' }));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false }));
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false }));
